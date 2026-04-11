@@ -1,7 +1,14 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Camera, CheckCircle2, RotateCcw, Trash2, Upload } from "lucide-react";
+import {
+  Camera,
+  CheckCircle2,
+  RotateCcw,
+  Trash2,
+  Upload,
+  RefreshCcw,
+} from "lucide-react";
 import { loadFaceModels } from "@/lib/face/models";
 import {
   detectAllFacesFromVideo,
@@ -31,6 +38,8 @@ const captureGuides = [
   "Move a little closer and look straight",
 ];
 
+type CameraFacingMode = "user" | "environment";
+
 export function FaceEnrollmentCamera({
   playerId,
   sampleTarget = 7,
@@ -40,6 +49,7 @@ export function FaceEnrollmentCamera({
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
 
+  const [cameraMode, setCameraMode] = useState<CameraFacingMode>("user");
   const [isReady, setIsReady] = useState(false);
   const [isStarting, setIsStarting] = useState(false);
   const [status, setStatus] = useState("Camera is not started");
@@ -60,8 +70,10 @@ export function FaceEnrollmentCamera({
     return captureGuides[Math.min(samples.length, captureGuides.length - 1)];
   }, [samples.length]);
 
-  async function startCamera() {
+  async function startCamera(mode: CameraFacingMode = cameraMode) {
     try {
+      stopCamera();
+      setIsReady(false);
       setIsStarting(true);
       setError(null);
       setStatus("Loading face models...");
@@ -72,7 +84,7 @@ export function FaceEnrollmentCamera({
 
       const stream = await navigator.mediaDevices.getUserMedia({
         video: {
-          facingMode: "user",
+          facingMode: { ideal: mode },
           width: { ideal: 1280 },
           height: { ideal: 720 },
         },
@@ -87,7 +99,9 @@ export function FaceEnrollmentCamera({
       }
 
       setIsReady(true);
-      setStatus("Camera ready. Position one face in the frame.");
+      setStatus(
+        `${mode === "user" ? "Front" : "Back"} camera ready. Position one face in the frame.`
+      );
     } catch (err) {
       console.error(err);
       setError("Could not access the camera.");
@@ -95,6 +109,14 @@ export function FaceEnrollmentCamera({
     } finally {
       setIsStarting(false);
     }
+  }
+
+  async function switchCamera() {
+    const nextMode: CameraFacingMode =
+      cameraMode === "user" ? "environment" : "user";
+
+    setCameraMode(nextMode);
+    await startCamera(nextMode);
   }
 
   function stopCamera() {
@@ -228,6 +250,41 @@ export function FaceEnrollmentCamera({
         <p className="mt-2 text-lg font-semibold text-blue-100">{currentGuide}</p>
       </div>
 
+      <div className="rounded-3xl border border-white/10 bg-white/[0.03] p-4">
+        <p className="text-sm text-white/50">Camera Mode</p>
+        <div className="mt-3 grid grid-cols-2 gap-3">
+          <button
+            type="button"
+            onClick={() => {
+              setCameraMode("user");
+              startCamera("user");
+            }}
+            className={`rounded-2xl px-4 py-3 text-sm font-medium ${
+              cameraMode === "user"
+                ? "bg-white text-black"
+                : "border border-white/10 bg-white/5 text-white"
+            }`}
+          >
+            Front Camera
+          </button>
+
+          <button
+            type="button"
+            onClick={() => {
+              setCameraMode("environment");
+              startCamera("environment");
+            }}
+            className={`rounded-2xl px-4 py-3 text-sm font-medium ${
+              cameraMode === "environment"
+                ? "bg-white text-black"
+                : "border border-white/10 bg-white/5 text-white"
+            }`}
+          >
+            Back Camera
+          </button>
+        </div>
+      </div>
+
       <div className="overflow-hidden rounded-3xl border border-white/10 bg-black/30">
         <div className="relative aspect-[3/4] w-full bg-black">
           <video
@@ -267,15 +324,25 @@ export function FaceEnrollmentCamera({
         {error ? <p className="mt-2 text-sm text-red-400">{error}</p> : null}
       </div>
 
-      <div className="grid grid-cols-2 gap-3">
+      <div className="grid grid-cols-3 gap-3">
         <button
           type="button"
-          onClick={startCamera}
-          disabled={isStarting || isReady}
+          onClick={() => startCamera(cameraMode)}
+          disabled={isStarting}
           className="inline-flex items-center justify-center gap-2 rounded-2xl bg-white px-4 py-3 font-medium text-black disabled:opacity-50"
         >
           <Camera className="h-4 w-4" />
-          {isReady ? "Camera Ready" : isStarting ? "Starting..." : "Start Camera"}
+          {isStarting ? "Starting..." : "Start"}
+        </button>
+
+        <button
+          type="button"
+          onClick={switchCamera}
+          disabled={isStarting}
+          className="inline-flex items-center justify-center gap-2 rounded-2xl border border-white/10 bg-white/5 px-4 py-3 font-medium text-white disabled:opacity-50"
+        >
+          <RefreshCcw className="h-4 w-4" />
+          Switch
         </button>
 
         <button
@@ -284,7 +351,7 @@ export function FaceEnrollmentCamera({
           disabled={!isReady || detecting}
           className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3 font-medium text-white disabled:opacity-50"
         >
-          {detecting ? "Checking..." : "Capture Sample"}
+          {detecting ? "Checking..." : "Capture"}
         </button>
       </div>
 
