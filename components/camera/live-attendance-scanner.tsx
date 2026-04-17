@@ -3,10 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Camera, ScanFace, UserPlus, RefreshCcw } from "lucide-react";
 import { loadFaceModels } from "@/lib/face/models";
-import {
-  detectAllFacesFromVideo,
-  detectSingleFaceFromVideo,
-} from "@/lib/face/detect";
+import { detectSingleFaceFast } from "@/lib/face/detect";
 import { validateFaceBox } from "@/lib/face/quality";
 import { ManualAttendanceSheet } from "@/components/attendance/manual-attendance-sheet";
 import { ScanResultOverlay } from "@/components/attendance/scan-result-overlay";
@@ -183,22 +180,10 @@ export function LiveAttendanceScanner({
       try {
         busyRef.current = true;
 
-        const allFaces = await detectAllFacesFromVideo(videoRef.current);
-
-        if (allFaces.length === 0) {
-          setStatus("No face detected");
-          return;
-        }
-
-        if (allFaces.length > 1) {
-          setStatus("Only one face should be visible");
-          return;
-        }
-
-        const detection = await detectSingleFaceFromVideo(videoRef.current);
+        const detection = await detectSingleFaceFast(videoRef.current);
 
         if (!detection) {
-          setStatus("Face could not be processed");
+          setStatus("No clear face detected");
           return;
         }
 
