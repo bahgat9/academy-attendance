@@ -2,28 +2,14 @@
 
 import * as faceapi from "@vladmandic/face-api";
 
-export async function detectSingleFaceFromVideo(video: HTMLVideoElement) {
+const detectorOptions = new faceapi.TinyFaceDetectorOptions({
+  inputSize: 256,
+  scoreThreshold: 0.5,
+});
+
+export async function detectSingleFaceFast(video: HTMLVideoElement) {
   return faceapi
-    .detectSingleFace(
-      video,
-      new faceapi.TinyFaceDetectorOptions({
-        inputSize: 416,
-        scoreThreshold: 0.5,
-      })
-    )
+    .detectSingleFace(video, detectorOptions)
     .withFaceLandmarks()
     .withFaceDescriptor();
-}
-
-export async function detectAllFacesFromVideo(video: HTMLVideoElement) {
-  return faceapi
-    .detectAllFaces(
-      video,
-      new faceapi.TinyFaceDetectorOptions({
-        inputSize: 416,
-        scoreThreshold: 0.5,
-      })
-    )
-    .withFaceLandmarks()
-    .withFaceDescriptors();
 }
