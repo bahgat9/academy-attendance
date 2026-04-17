@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import "./globals.css";
 import { Toaster } from "@/components/ui/sonner";
 
-export const metadata = {
+export const metadata: Metadata = {
   title: {
     default: "TUT Attendance",
     template: "%s | TUT Attendance",
