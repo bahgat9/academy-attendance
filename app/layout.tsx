@@ -2,9 +2,13 @@ import type { Metadata } from "next";
 import "./globals.css";
 import { Toaster } from "@/components/ui/sonner";
 
-export const metadata: Metadata = {
-  title: "Academy Attendance",
-  description: "Private football academy attendance app",
+export const metadata = {
+  title: {
+    default: "TUT Attendance",
+    template: "%s | TUT Attendance",
+  },
+  description: "TUT Football Academy Attendance System",
+  applicationName: "TUT Attendance",
 };
 
 export default function RootLayout({
