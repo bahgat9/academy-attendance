@@ -2,18 +2,15 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
-  Camera,
   CheckCircle2,
   RotateCcw,
   Trash2,
   Upload,
   RefreshCcw,
+  Camera,
 } from "lucide-react";
 import { loadFaceModels } from "@/lib/face/models";
-import {
-  detectAllFacesFromVideo,
-  detectSingleFaceFromVideo,
-} from "@/lib/face/detect";
+import { detectSingleFaceFast } from "@/lib/face/detect";
 import { validateFaceBox } from "@/lib/face/quality";
 import { useRouter } from "next/navigation";
 
@@ -28,6 +25,8 @@ type FaceEnrollmentCameraProps = {
   sampleTarget?: number;
 };
 
+type CameraFacingMode = "user" | "environment";
+
 const captureGuides = [
   "Look straight",
   "Turn slightly left",
@@ -35,10 +34,8 @@ const captureGuides = [
   "Lift chin slightly",
   "Lower chin slightly",
   "Look straight again",
-  "Move a little closer and look straight",
+  "Move a little closer",
 ];
-
-type CameraFacingMode = "user" | "environment";
 
 export function FaceEnrollmentCamera({
   playerId,
@@ -51,18 +48,12 @@ export function FaceEnrollmentCamera({
 
   const [cameraMode, setCameraMode] = useState<CameraFacingMode>("user");
   const [isReady, setIsReady] = useState(false);
-  const [isStarting, setIsStarting] = useState(false);
-  const [status, setStatus] = useState("Camera is not started");
+  const [isStarting, setIsStarting] = useState(true);
+  const [status, setStatus] = useState("Preparing camera...");
   const [error, setError] = useState<string | null>(null);
   const [samples, setSamples] = useState<CapturedSample[]>([]);
   const [detecting, setDetecting] = useState(false);
   const [saving, setSaving] = useState(false);
-
-  useEffect(() => {
-    return () => {
-      stopCamera();
-    };
-  }, []);
 
   const completed = samples.length >= sampleTarget;
 
@@ -70,23 +61,31 @@ export function FaceEnrollmentCamera({
     return captureGuides[Math.min(samples.length, captureGuides.length - 1)];
   }, [samples.length]);
 
+  useEffect(() => {
+    startCamera("user");
+
+    return () => {
+      stopCamera();
+    };
+  }, []);
+
   async function startCamera(mode: CameraFacingMode = cameraMode) {
     try {
       stopCamera();
       setIsReady(false);
       setIsStarting(true);
       setError(null);
-      setStatus("Loading face models...");
+      setStatus("Loading models...");
 
       await loadFaceModels();
 
-      setStatus("Requesting camera access...");
+      setStatus("Opening camera...");
 
       const stream = await navigator.mediaDevices.getUserMedia({
         video: {
           facingMode: { ideal: mode },
-          width: { ideal: 1280 },
-          height: { ideal: 720 },
+          width: { ideal: 640 },
+          height: { ideal: 480 },
         },
         audio: false,
       });
@@ -98,10 +97,9 @@ export function FaceEnrollmentCamera({
         await videoRef.current.play();
       }
 
+      setCameraMode(mode);
       setIsReady(true);
-      setStatus(
-        `${mode === "user" ? "Front" : "Back"} camera ready. Position one face in the frame.`
-      );
+      setStatus(`${mode === "user" ? "Front" : "Back"} camera ready`);
     } catch (err) {
       console.error(err);
       setError("Could not access the camera.");
@@ -111,14 +109,6 @@ export function FaceEnrollmentCamera({
     }
   }
 
-  async function switchCamera() {
-    const nextMode: CameraFacingMode =
-      cameraMode === "user" ? "environment" : "user";
-
-    setCameraMode(nextMode);
-    await startCamera(nextMode);
-  }
-
   function stopCamera() {
     if (streamRef.current) {
       streamRef.current.getTracks().forEach((track) => track.stop());
@@ -126,30 +116,25 @@ export function FaceEnrollmentCamera({
     }
   }
 
+  async function switchCamera() {
+    const nextMode: CameraFacingMode =
+      cameraMode === "user" ? "environment" : "user";
+
+    await startCamera(nextMode);
+  }
+
   async function captureSample() {
-    if (!videoRef.current || !canvasRef.current || detecting) return;
+    if (!videoRef.current || !canvasRef.current || detecting || !isReady) return;
 
     try {
       setDetecting(true);
       setError(null);
-      setStatus("Checking face...");
+      setStatus("Detecting face...");
 
-      const allFaces = await detectAllFacesFromVideo(videoRef.current);
-
-      if (allFaces.length === 0) {
-        setStatus("No face detected");
-        return;
-      }
-
-      if (allFaces.length > 1) {
-        setStatus("Only one face must be visible");
-        return;
-      }
-
-      const detection = await detectSingleFaceFromVideo(videoRef.current);
+      const detection = await detectSingleFaceFast(videoRef.current);
 
       if (!detection) {
-        setStatus("Face could not be processed");
+        setStatus("No clear face detected");
         return;
       }
 
@@ -162,10 +147,6 @@ export function FaceEnrollmentCamera({
 
       const video = videoRef.current;
       const canvas = canvasRef.current;
-
-      canvas.width = video.videoWidth;
-      canvas.height = video.videoHeight;
-
       const ctx = canvas.getContext("2d");
 
       if (!ctx) {
@@ -173,22 +154,31 @@ export function FaceEnrollmentCamera({
         return;
       }
 
-      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+      const targetWidth = 640;
+      const ratio = video.videoHeight / video.videoWidth;
+      const targetHeight = Math.round(targetWidth * ratio);
 
-      const imageDataUrl = canvas.toDataURL("image/jpeg", 0.92);
+      canvas.width = targetWidth;
+      canvas.height = targetHeight;
+
+      ctx.drawImage(video, 0, 0, targetWidth, targetHeight);
+
+      const imageDataUrl = canvas.toDataURL("image/jpeg", 0.82);
       const descriptor = Array.from(detection.descriptor);
 
-      const newSample: CapturedSample = {
-        id: crypto.randomUUID(),
-        imageDataUrl,
-        descriptor,
-      };
+      setSamples((prev) => [
+        ...prev,
+        {
+          id: crypto.randomUUID(),
+          imageDataUrl,
+          descriptor,
+        },
+      ]);
 
-      setSamples((prev) => [...prev, newSample]);
-      setStatus("Sample captured successfully");
+      setStatus("Sample captured");
     } catch (err) {
       console.error(err);
-      setError("Failed to capture face sample.");
+      setError("Failed to capture sample.");
       setStatus("Capture failed");
     } finally {
       setDetecting(false);
@@ -229,13 +219,13 @@ export function FaceEnrollmentCamera({
         throw new Error(result.error || "Failed to save enrollment");
       }
 
-      setStatus(`Enrollment saved successfully (${result.saved} samples)`);
+      setStatus(`Enrollment saved (${result.saved} samples)`);
       router.push("/players");
       router.refresh();
     } catch (err) {
       console.error(err);
       setError(err instanceof Error ? err.message : "Failed to save enrollment");
-      setStatus("Enrollment save failed");
+      setStatus("Save failed");
     } finally {
       setSaving(false);
     }
@@ -243,71 +233,14 @@ export function FaceEnrollmentCamera({
 
   return (
     <div className="space-y-4">
-      <div className="rounded-3xl border border-blue-500/20 bg-blue-500/10 p-4">
-        <p className="text-xs uppercase tracking-wide text-blue-200/70">
-          Current capture instruction
-        </p>
-        <p className="mt-2 text-lg font-semibold text-blue-100">{currentGuide}</p>
-      </div>
-
-      <div className="rounded-3xl border border-white/10 bg-white/[0.03] p-4">
-        <p className="text-sm text-white/50">Camera Mode</p>
-        <div className="mt-3 grid grid-cols-2 gap-3">
-          <button
-            type="button"
-            onClick={() => {
-              setCameraMode("user");
-              startCamera("user");
-            }}
-            className={`rounded-2xl px-4 py-3 text-sm font-medium ${
-              cameraMode === "user"
-                ? "bg-white text-black"
-                : "border border-white/10 bg-white/5 text-white"
-            }`}
-          >
-            Front Camera
-          </button>
-
-          <button
-            type="button"
-            onClick={() => {
-              setCameraMode("environment");
-              startCamera("environment");
-            }}
-            className={`rounded-2xl px-4 py-3 text-sm font-medium ${
-              cameraMode === "environment"
-                ? "bg-white text-black"
-                : "border border-white/10 bg-white/5 text-white"
-            }`}
-          >
-            Back Camera
-          </button>
-        </div>
-      </div>
-
-      <div className="overflow-hidden rounded-3xl border border-white/10 bg-black/30">
-        <div className="relative aspect-[3/4] w-full bg-black">
-          <video
-            ref={videoRef}
-            autoPlay
-            muted
-            playsInline
-            className="h-full w-full object-cover"
-          />
-
-          <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
-            <div className="h-[58%] w-[72%] rounded-[2.5rem] border-2 border-dashed border-white/30" />
-          </div>
-        </div>
-      </div>
-
       <canvas ref={canvasRef} className="hidden" />
 
       <div className="rounded-3xl border border-white/10 bg-white/[0.03] p-4">
         <div className="flex items-start justify-between gap-3">
           <div>
-            <p className="text-sm text-white/50">Enrollment progress</p>
-            <p className="mt-1 text-lg font-medium">
+            <p className="text-sm text-white/50">Current instruction</p>
+            <h2 className="mt-1 text-xl font-semibold">{currentGuide}</h2>
+            <p className="mt-2 text-sm text-white/60">
               {samples.length} / {sampleTarget} samples
             </p>
           </div>
@@ -324,70 +257,39 @@ export function FaceEnrollmentCamera({
         {error ? <p className="mt-2 text-sm text-red-400">{error}</p> : null}
       </div>
 
-      <div className="grid grid-cols-3 gap-3">
-        <button
-          type="button"
-          onClick={() => startCamera(cameraMode)}
-          disabled={isStarting}
-          className="inline-flex items-center justify-center gap-2 rounded-2xl bg-white px-4 py-3 font-medium text-black disabled:opacity-50"
-        >
-          <Camera className="h-4 w-4" />
-          {isStarting ? "Starting..." : "Start"}
-        </button>
+      <div className="overflow-hidden rounded-3xl border border-white/10 bg-black/30">
+        <div className="relative aspect-[3/4] w-full bg-black">
+          <video
+            ref={videoRef}
+            autoPlay
+            muted
+            playsInline
+            className="h-full w-full object-cover"
+          />
 
-        <button
-          type="button"
-          onClick={switchCamera}
-          disabled={isStarting}
-          className="inline-flex items-center justify-center gap-2 rounded-2xl border border-white/10 bg-white/5 px-4 py-3 font-medium text-white disabled:opacity-50"
-        >
-          <RefreshCcw className="h-4 w-4" />
-          Switch
-        </button>
+          <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
+            <div className="h-[58%] w-[72%] rounded-[2.5rem] border-2 border-dashed border-white/30" />
+          </div>
 
-        <button
-          type="button"
-          onClick={captureSample}
-          disabled={!isReady || detecting}
-          className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3 font-medium text-white disabled:opacity-50"
-        >
-          {detecting ? "Checking..." : "Capture"}
-        </button>
-      </div>
-
-      <div className="grid grid-cols-2 gap-3">
-        <button
-          type="button"
-          onClick={resetSamples}
-          disabled={samples.length === 0}
-          className="inline-flex items-center justify-center gap-2 rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-white disabled:opacity-50"
-        >
-          <RotateCcw className="h-4 w-4" />
-          Reset Samples
-        </button>
-
-        <button
-          type="button"
-          onClick={saveEnrollment}
-          disabled={!completed || saving}
-          className="inline-flex items-center justify-center gap-2 rounded-2xl bg-emerald-500 px-4 py-3 font-medium text-black disabled:opacity-50"
-        >
-          <Upload className="h-4 w-4" />
-          {saving ? "Saving..." : "Save Enrollment"}
-        </button>
+          {isStarting ? (
+            <div className="absolute inset-0 flex items-center justify-center bg-black/45">
+              <div className="rounded-2xl border border-white/10 bg-white/10 px-4 py-3 text-sm text-white">
+                Opening camera...
+              </div>
+            </div>
+          ) : null}
+        </div>
       </div>
 
       {samples.length > 0 ? (
-        <div className="space-y-3">
-          <h3 className="text-lg font-medium">Captured Samples</h3>
-
-          <div className="grid grid-cols-2 gap-3">
+        <div className="rounded-3xl border border-white/10 bg-white/[0.03] p-3">
+          <div className="flex gap-3 overflow-x-auto">
             {samples.map((sample, index) => (
               <div
                 key={sample.id}
-                className="overflow-hidden rounded-3xl border border-white/10 bg-white/[0.03]"
+                className="min-w-[96px] overflow-hidden rounded-2xl border border-white/10 bg-black/20"
               >
-                <div className="aspect-[3/4] w-full overflow-hidden bg-black">
+                <div className="aspect-[3/4] w-24 overflow-hidden bg-black">
                   <img
                     src={sample.imageDataUrl}
                     alt={`Sample ${index + 1}`}
@@ -395,14 +297,14 @@ export function FaceEnrollmentCamera({
                   />
                 </div>
 
-                <div className="flex items-center justify-between px-3 py-3">
-                  <span className="text-sm text-white/70">Sample {index + 1}</span>
+                <div className="flex items-center justify-between px-2 py-2">
+                  <span className="text-xs text-white/70">{index + 1}</span>
                   <button
                     type="button"
                     onClick={() => removeSample(sample.id)}
-                    className="rounded-xl border border-white/10 bg-white/5 p-2 text-white/70"
+                    className="rounded-lg border border-white/10 bg-white/5 p-1 text-white/70"
                   >
-                    <Trash2 className="h-4 w-4" />
+                    <Trash2 className="h-3.5 w-3.5" />
                   </button>
                 </div>
               </div>
@@ -410,6 +312,50 @@ export function FaceEnrollmentCamera({
           </div>
         </div>
       ) : null}
+
+      <div className="sticky bottom-20 z-20 rounded-[2rem] border border-white/10 bg-neutral-950/95 p-3 backdrop-blur">
+        <div className="grid grid-cols-2 gap-3">
+          <button
+            type="button"
+            onClick={switchCamera}
+            disabled={isStarting}
+            className="inline-flex items-center justify-center gap-2 rounded-2xl border border-white/10 bg-white/5 px-4 py-3 font-medium text-white disabled:opacity-50"
+          >
+            <RefreshCcw className="h-4 w-4" />
+            {cameraMode === "user" ? "Use Back" : "Use Front"}
+          </button>
+
+          <button
+            type="button"
+            onClick={captureSample}
+            disabled={!isReady || detecting}
+            className="inline-flex items-center justify-center gap-2 rounded-2xl bg-white px-4 py-3 font-medium text-black disabled:opacity-50"
+          >
+            <Camera className="h-4 w-4" />
+            {detecting ? "Detecting..." : "Capture"}
+          </button>
+
+          <button
+            type="button"
+            onClick={resetSamples}
+            disabled={samples.length === 0}
+            className="inline-flex items-center justify-center gap-2 rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-white disabled:opacity-50"
+          >
+            <RotateCcw className="h-4 w-4" />
+            Reset
+          </button>
+
+          <button
+            type="button"
+            onClick={saveEnrollment}
+            disabled={!completed || saving}
+            className="inline-flex items-center justify-center gap-2 rounded-2xl bg-emerald-500 px-4 py-3 font-medium text-black disabled:opacity-50"
+          >
+            <Upload className="h-4 w-4" />
+            {saving ? "Saving..." : "Save"}
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
