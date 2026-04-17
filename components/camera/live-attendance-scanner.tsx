@@ -54,15 +54,18 @@ export function LiveAttendanceScanner({
   const busyRef = useRef(false);
   const intervalRef = useRef<NodeJS.Timeout | null>(null);
 
-  const [cameraMode, setCameraMode] = useState<CameraFacingMode>("user");
+  const [cameraMode, setCameraMode] = useState<CameraFacingMode>("environment");
   const [isReady, setIsReady] = useState(false);
-  const [isStarting, setIsStarting] = useState(false);
-  const [status, setStatus] = useState("Camera not started");
+  const [isStarting, setIsStarting] = useState(true);
+  const [status, setStatus] = useState("Preparing scanner...");
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<ScanResult | null>(null);
   const [showManualSheet, setShowManualSheet] = useState(false);
+  const [isLoopRunning, setIsLoopRunning] = useState(false);
 
   useEffect(() => {
+    startCamera("environment");
+
     return () => {
       stopCamera();
     };
@@ -78,6 +81,8 @@ export function LiveAttendanceScanner({
       streamRef.current.getTracks().forEach((track) => track.stop());
       streamRef.current = null;
     }
+
+    setIsLoopRunning(false);
   }
 
   function triggerFeedback(type: "success" | "warning" | "manual" | "error") {
@@ -102,9 +107,11 @@ export function LiveAttendanceScanner({
     else if (
       nextResult.status === "recognized_confirm" ||
       nextResult.status === "duplicate_blocked"
-    )
+    ) {
       triggerFeedback("warning");
-    else triggerFeedback("error");
+    } else {
+      triggerFeedback("error");
+    }
 
     setResult(nextResult);
     setStatus(nextResult.message);
@@ -125,17 +132,17 @@ export function LiveAttendanceScanner({
       setIsReady(false);
       setIsStarting(true);
       setError(null);
-      setStatus("Loading face models...");
+      setStatus("Loading models...");
 
       await loadFaceModels();
 
-      setStatus("Requesting camera access...");
+      setStatus("Opening camera...");
 
       const stream = await navigator.mediaDevices.getUserMedia({
         video: {
           facingMode: { ideal: mode },
-          width: { ideal: 1280 },
-          height: { ideal: 720 },
+          width: { ideal: 640 },
+          height: { ideal: 480 },
         },
         audio: false,
       });
@@ -147,10 +154,12 @@ export function LiveAttendanceScanner({
         await videoRef.current.play();
       }
 
+      setCameraMode(mode);
       setIsReady(true);
       setStatus(
         `${mode === "user" ? "Front" : "Back"} camera ready. Show one player at a time.`
       );
+
       startRecognitionLoop();
     } catch (err) {
       console.error(err);
@@ -165,7 +174,6 @@ export function LiveAttendanceScanner({
     const nextMode: CameraFacingMode =
       cameraMode === "user" ? "environment" : "user";
 
-    setCameraMode(nextMode);
     await startCamera(nextMode);
   }
 
@@ -173,6 +181,8 @@ export function LiveAttendanceScanner({
     if (intervalRef.current) {
       clearInterval(intervalRef.current);
     }
+
+    setIsLoopRunning(true);
 
     intervalRef.current = setInterval(async () => {
       if (!videoRef.current || busyRef.current || showManualSheet) return;
@@ -230,15 +240,27 @@ export function LiveAttendanceScanner({
       <ScanResultOverlay result={result} />
 
       <div className="space-y-4">
+        <div className="rounded-3xl border border-blue-500/20 bg-blue-500/10 p-4">
+          <p className="text-xs uppercase tracking-wide text-blue-200/70">
+            Scanner status
+          </p>
+          <h2 className="mt-2 text-xl font-semibold text-blue-100">{status}</h2>
+          <p className="mt-2 text-sm text-blue-100/75">
+            {cameraMode === "user"
+              ? "Front camera active"
+              : "Back camera active"}
+            {" · "}
+            {isLoopRunning ? "Live detection running" : "Scanner idle"}
+          </p>
+          {error ? <p className="mt-2 text-sm text-red-300">{error}</p> : null}
+        </div>
+
         <div className="rounded-3xl border border-white/10 bg-white/[0.03] p-4">
           <p className="text-sm text-white/50">Camera Mode</p>
           <div className="mt-3 grid grid-cols-2 gap-3">
             <button
               type="button"
-              onClick={() => {
-                setCameraMode("user");
-                startCamera("user");
-              }}
+              onClick={() => startCamera("user")}
               className={`rounded-2xl px-4 py-3 text-sm font-medium ${
                 cameraMode === "user"
                   ? "bg-white text-black"
@@ -250,10 +272,7 @@ export function LiveAttendanceScanner({
 
             <button
               type="button"
-              onClick={() => {
-                setCameraMode("environment");
-                startCamera("environment");
-              }}
+              onClick={() => startCamera("environment")}
               className={`rounded-2xl px-4 py-3 text-sm font-medium ${
                 cameraMode === "environment"
                   ? "bg-white text-black"
@@ -278,63 +297,67 @@ export function LiveAttendanceScanner({
             <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
               <div className="h-[58%] w-[72%] rounded-[2.5rem] border-2 border-dashed border-white/30" />
             </div>
+
+            {isStarting ? (
+              <div className="absolute inset-0 flex items-center justify-center bg-black/45">
+                <div className="rounded-2xl border border-white/10 bg-white/10 px-4 py-3 text-sm text-white">
+                  Opening camera...
+                </div>
+              </div>
+            ) : null}
           </div>
         </div>
 
-        <div className="rounded-3xl border border-white/10 bg-white/[0.03] p-4">
-          <p className="text-sm text-white/50">Scanner status</p>
-          <p className="mt-2 text-lg font-semibold">{status}</p>
-          {error ? <p className="mt-3 text-sm text-red-300">{error}</p> : null}
-        </div>
-
-        <div className="grid grid-cols-4 gap-3">
-          <button
-            type="button"
-            onClick={() => startCamera(cameraMode)}
-            disabled={isStarting}
-            className="inline-flex items-center justify-center gap-2 rounded-2xl bg-white px-4 py-3 font-medium text-black disabled:opacity-50"
-          >
-            <Camera className="h-4 w-4" />
-            {isStarting ? "Starting..." : "Start"}
-          </button>
-
-          <button
-            type="button"
-            onClick={switchCamera}
-            disabled={isStarting}
-            className="inline-flex items-center justify-center gap-2 rounded-2xl border border-white/10 bg-white/5 px-4 py-3 font-medium text-white disabled:opacity-50"
-          >
-            <RefreshCcw className="h-4 w-4" />
-            Switch
-          </button>
-
-          <button
-            type="button"
-            onClick={() => {
-              setResult(null);
-              setStatus("Scanner reset");
-              setError(null);
-            }}
-            className="inline-flex items-center justify-center gap-2 rounded-2xl border border-white/10 bg-white/5 px-4 py-3 font-medium text-white"
-          >
-            <ScanFace className="h-4 w-4" />
-            Reset
-          </button>
-
-          <button
-            type="button"
-            onClick={() => setShowManualSheet(true)}
-            className="inline-flex items-center justify-center gap-2 rounded-2xl border border-blue-500/20 bg-blue-500/10 px-4 py-3 font-medium text-blue-200"
-          >
-            <UserPlus className="h-4 w-4" />
-            Manual
-          </button>
-        </div>
-
         <div className="rounded-3xl border border-white/10 bg-white/[0.03] p-4 text-sm text-white/60">
-          <p>Front camera is easier for alignment.</p>
-          <p className="mt-2">Back camera may give sharper recognition quality.</p>
+          <p>Use back camera for sharper recognition if needed.</p>
+          <p className="mt-2">Use front camera when you need easier alignment.</p>
           <p className="mt-2">Use Manual for twins or difficult matches.</p>
+        </div>
+
+        <div className="sticky bottom-20 z-20 rounded-[2rem] border border-white/10 bg-neutral-950/95 p-3 backdrop-blur">
+          <div className="grid grid-cols-4 gap-3">
+            <button
+              type="button"
+              onClick={switchCamera}
+              disabled={isStarting}
+              className="inline-flex items-center justify-center gap-2 rounded-2xl border border-white/10 bg-white/5 px-4 py-3 font-medium text-white disabled:opacity-50"
+            >
+              <RefreshCcw className="h-4 w-4" />
+              Switch
+            </button>
+
+            <button
+              type="button"
+              onClick={() => {
+                setResult(null);
+                setStatus("Scanner reset");
+                setError(null);
+              }}
+              className="inline-flex items-center justify-center gap-2 rounded-2xl border border-white/10 bg-white/5 px-4 py-3 font-medium text-white"
+            >
+              <ScanFace className="h-4 w-4" />
+              Reset
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setShowManualSheet(true)}
+              className="inline-flex items-center justify-center gap-2 rounded-2xl border border-blue-500/20 bg-blue-500/10 px-4 py-3 font-medium text-blue-200"
+            >
+              <UserPlus className="h-4 w-4" />
+              Manual
+            </button>
+
+            <button
+              type="button"
+              onClick={() => startCamera(cameraMode)}
+              disabled={isStarting}
+              className="inline-flex items-center justify-center gap-2 rounded-2xl bg-white px-4 py-3 font-medium text-black disabled:opacity-50"
+            >
+              <Camera className="h-4 w-4" />
+              {isStarting ? "..." : "Start"}
+            </button>
+          </div>
         </div>
       </div>
 
